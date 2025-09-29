@@ -8,14 +8,18 @@ JIRA csv to Taiga
 #### Ubuntu
 ```bash
 sudo apt update
-sudo apt install python3 python3-pip
-pip3 install requests
+sudo apt install python3 python3-pip python3-venv
+python3 -m venv venv
+source venv/bin/activate
+pip install requests
 ```
 
 #### Arch Linux
 ```bash
 sudo pacman -Syu
 sudo pacman -S python python-pip
+python -m venv venv
+source venv/bin/activate
 pip install requests
 ```
 
@@ -25,7 +29,21 @@ Install the required dependencies using pip:
 pip install requests
 ```
 
+If your system uses PEP 668 (externally managed environment), create a virtual environment first:
+
+```bash
+python -m venv venv
+source venv/bin/activate
+pip install requests
+```
+
 ## Usage
+
+If you used a virtual environment during installation, activate it first:
+
+```bash
+source venv/bin/activate
+```
 
 To run the script, use the following command:
 
