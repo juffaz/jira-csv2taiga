@@ -17,6 +17,7 @@ TAIGA_USERNAME = os.getenv("TAIGA_USERNAME", "admint")
 TAIGA_PASSWORD = os.getenv("TAIGA_PASSWORD", "admin2025")
 PROJECT_SLUG = os.getenv("PROJECT_SLUG", "synapps2025")
 CSV_FILE = os.getenv("CSV_FILE", "Jira_fixed.csv")
+USER_CSV_FILE = os.getenv("USER_CSV_FILE", "export-users.csv")
 DEFAULT_US_STATUS_NAME = "New"
 RATE_LIMIT = float(os.getenv("RATE_LIMIT", "0.3"))
 USER_CACHE: Dict[str, Optional[int]] = {}
@@ -45,7 +46,7 @@ STATUS_MAP = {
 
 # User names -> email mapping
 USER_EMAIL_MAP = {
-    "Aisha": "admin@synapps.az",
+    "Aisha": "admin@site.az",
 }
 
 if not TAIGA_PASSWORD:
@@ -110,6 +111,45 @@ def find_user_id(token: str, term: str) -> Optional[int]:
         print(f"⚠️ Error searching for user {term}: {e}")
         USER_CACHE[key] = None
         return None
+
+# --- CREATE USER ---
+def create_user(token: str, username: str, email: str, full_name: str) -> None:
+    s = _session(token)
+    payload = {
+        "username": username,
+        "email": email,
+        "full_name": full_name,
+        "password": "TempPass123!",  # Temporary password, user should change
+    }
+    try:
+        r = s.post(f"{TAIGA_URL}/api/v1/users", json=payload, timeout=30)
+        r.raise_for_status()
+        print(f"✅ Created user: {username}")
+    except RequestException as e:
+        print(f"❌ Failed to create user {username}: {e}")
+
+def process_users_csv(token: str) -> None:
+    if not os.path.exists(USER_CSV_FILE):
+        print(f"⚠️ User CSV file not found: {USER_CSV_FILE}")
+        return
+    try:
+        with open(USER_CSV_FILE, newline="", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                username = (row.get("username") or "").strip()
+                email = (row.get("email") or "").strip()
+                full_name = (row.get("full_name") or "").strip()
+                if not username or not email:
+                    print("⚠️ Skipped user: missing username or email")
+                    continue
+                # Check if exists
+                existing_id = find_user_id(token, username)
+                if existing_id:
+                    print(f"↪️ User {username} already exists")
+                    continue
+                create_user(token, username, email, full_name)
+    except Exception as e:
+        print(f"💥 Error processing users CSV: {e}")
 
 # --- STATUSES (User Stories) ---
 def get_or_create_us_status(token: str, project_id: int, name: str) -> int:
@@ -248,8 +288,9 @@ def create_userstory(
     logging.error(error_msg)
 
 def main() -> None:
-    print("🚀 Import Jira → Taiga (User Stories)")
+    print("🚀 Import Jira → Taiga (Users and User Stories)")
     token = taiga_authenticate()
+    process_users_csv(token)
     project = get_project_by_slug(token, PROJECT_SLUG)
     project_id = project["id"]
     print(f"📂 Project: {project['name']} (ID={project_id})")
