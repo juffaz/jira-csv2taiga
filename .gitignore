@@ -26,4 +26,4 @@ MANIFEST
 # Virtual environments
 venv/
 
-error.log
+errors.log
