@@ -120,6 +120,8 @@ def create_user(token: str, username: str, email: str, full_name: str) -> None:
         "email": email,
         "full_name": full_name,
         "password": "TempPass123!",  # Temporary password, user should change
+        "is_active": True,
+        "is_superuser": False,
     }
     try:
         r = s.post(f"{TAIGA_URL}/api/v1/users", json=payload, timeout=30)
