@@ -6,6 +6,7 @@ import sys
 import time
 import requests
 import logging
+import re
 from typing import Dict, Any, List, Optional
 from requests.exceptions import RequestException
 import uuid
@@ -352,10 +353,12 @@ def main() -> None:
         with open(CSV_FILE, newline="", encoding="utf-8-sig") as f:
             reader = csv.DictReader(f)
             for i, row in enumerate(reader, 1):
-                summary = (row.get("Summary") or "").strip()
+                summary = (row.get("Issue") or row.get("Summary") or "").strip()
                 if not summary:
                     print(f"⚠️ Task {i} skipped: missing Summary")
                     continue
+                # Remove leading ID prefixes like "KEY-number: "
+                summary = re.sub(r'^(\w+-\d+:\s+)?', '', summary)
                 jira_key = (row.get("Issue key") or "").strip()
                 description = (row.get("Description") or "").strip()
                 assignee = (row.get("Assignee") or "").strip()
