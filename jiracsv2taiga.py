@@ -85,6 +85,17 @@ def get_project_by_slug(token: str, slug: str) -> Dict[str, Any]:
         print(f"❌ Project not found: {e}")
         sys.exit(1)
 
+def get_project_roles(token: str, project_id: int) -> Dict[str, int]:
+    s = _session(token)
+    try:
+        r = s.get(f"{TAIGA_URL}/api/v1/roles", params={"project": project_id}, timeout=30)
+        r.raise_for_status()
+        roles = {role["name"]: role["id"] for role in r.json()}
+        return roles
+    except RequestException as e:
+        print(f"❌ Error getting roles: {e}")
+        return {}
+
 # --- USERS ---
 def find_user_id(token: str, term: str) -> Optional[int]:
     if not term:
@@ -116,21 +127,54 @@ def find_user_id(token: str, term: str) -> Optional[int]:
 def create_user(token: str, username: str, email: str, full_name: str) -> None:
     s = _session(token)
     payload = {
+        "type": "public",
         "username": username,
         "email": email,
         "full_name": full_name,
         "password": "TempPass123!",  # Temporary password, user should change
-        "is_active": True,
-        "is_superuser": False,
+        "accepted_terms": True,
     }
     try:
-        r = s.post(f"{TAIGA_URL}/api/v1/users", json=payload, timeout=30)
+        r = s.post(f"{TAIGA_URL}/api/v1/auth/register", json=payload, timeout=30)
         r.raise_for_status()
         print(f"✅ Created user: {username}")
     except RequestException as e:
         print(f"❌ Failed to create user {username}: {e}")
 
-def process_users_csv(token: str) -> None:
+def add_to_contacts(token: str, email: str) -> None:
+    s = _session(token)
+    try:
+        r = s.post(f"{TAIGA_URL}/api/v1/contacts", json={"email": email}, timeout=30)
+        if r.status_code == 201:
+            print(f"✅ Added {email} to contacts")
+        else:
+            print(f"⚠️ Failed to add {email} to contacts: {r.status_code} {r.text}")
+    except RequestException as e:
+        print(f"⚠️ Error adding to contacts: {e}")
+
+def add_user_to_project(token: str, project_id: int, username: str, email: str, roles: Dict[str, int]) -> None:
+    role_id = roles.get("Developer") or (list(roles.values())[0] if roles else None)
+    if not role_id:
+        print(f"⚠️ No roles found for project")
+        return
+    s = _session(token)
+    payload = {
+        "project": project_id,
+        "username": username,
+        "role": role_id,
+    }
+    try:
+        r = s.post(f"{TAIGA_URL}/api/v1/memberships", json={"project": project_id, "username": username, "email": email, "role": role_id}, timeout=30)
+        if r.status_code == 201:
+            print(f"✅ Added user {username} to project")
+        elif r.status_code == 400 and "already exists" in r.text.lower():
+            print(f"↪️ User {username} already in project")
+        else:
+            print(f"⚠️ Failed to add user {username} to project: {r.status_code} {r.text}")
+    except RequestException as e:
+        print(f"⚠️ Error adding user to project: {e}")
+
+def process_users_csv(token: str, project_id: int, roles: Dict[str, int]) -> None:
     if not os.path.exists(USER_CSV_FILE):
         print(f"⚠️ User CSV file not found: {USER_CSV_FILE}")
         return
@@ -148,8 +192,10 @@ def process_users_csv(token: str) -> None:
                 existing_id = find_user_id(token, username)
                 if existing_id:
                     print(f"↪️ User {username} already exists")
-                    continue
-                create_user(token, username, email, full_name)
+                else:
+                    create_user(token, username, email, full_name)
+                    existing_id = find_user_id(token, username)
+                # User created, but may need email confirmation to be added to project
     except Exception as e:
         print(f"💥 Error processing users CSV: {e}")
 
@@ -250,6 +296,8 @@ def create_userstory(
     assigned_to = find_user_id(token, assignee_name) if assignee_name else None
 
     description = description.replace("\r\n", "\n").strip() if description else ""
+
+    description = description.replace("\r\n", "\n").strip() if description else ""
     if jira_key:
         description = f"**Jira Key**: {jira_key}\n\n{description}".strip()
 
@@ -292,10 +340,11 @@ def create_userstory(
 def main() -> None:
     print("🚀 Import Jira → Taiga (Users and User Stories)")
     token = taiga_authenticate()
-    process_users_csv(token)
     project = get_project_by_slug(token, PROJECT_SLUG)
     project_id = project["id"]
     print(f"📂 Project: {project['name']} (ID={project_id})")
+    roles = get_project_roles(token, project_id)
+    process_users_csv(token, project_id, roles)
 
     processed = errors = 0
 

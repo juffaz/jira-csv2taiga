@@ -1,4 +1,4 @@
-# jira-csv2taiga
+                                # jira-csv2taiga
 JIRA csv to Taiga
 
 ## Installation
@@ -58,7 +58,7 @@ Make sure to set the required environment variables:
 - `TAIGA_PASSWORD`: Your Taiga password
 - `PROJECT_SLUG`: Slug of the Taiga project
 - `CSV_FILE`: Path to the JIRA CSV file (default: Jira_fixed.csv)
-- `USER_CSV_FILE`: Path to the users CSV file (default: export-users.csv). If the file exists, users are created before importing tasks. The CSV should have columns: `username`, `email`, `full_name`.
+- `USER_CSV_FILE`: Path to the users CSV file (default: export-users.csv). If the file exists, users are created before importing tasks via public registration (sends confirmation email). The CSV should have columns: `username`, `email`, `full_name`. Users need to confirm their email to be active and assignable.
 - `RATE_LIMIT`: Rate limit for API calls (default: 0.3 seconds)
 
 ### Example
