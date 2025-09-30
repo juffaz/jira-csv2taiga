@@ -23,6 +23,7 @@ DEFAULT_US_STATUS_NAME = "New"
 RATE_LIMIT = float(os.getenv("RATE_LIMIT", "0.3"))
 USER_CACHE: Dict[str, Optional[int]] = {}
 STATUS_CACHE: Dict[str, int] = {}
+USER_CSV_MAP: Dict[str, str] = {}  # username/full_name -> email
 
 # Logging configuration
 logging.basicConfig(
@@ -105,7 +106,7 @@ def find_user_id(token: str, term: str) -> Optional[int]:
     if key in USER_CACHE:
         return USER_CACHE[key]
     s = _session(token)
-    email = USER_EMAIL_MAP.get(term, None)
+    email = USER_EMAIL_MAP.get(term, None) or USER_CSV_MAP.get(term, None)
     try:
         r = s.get(f"{TAIGA_URL}/api/v1/users", params={"search": term}, timeout=30)
         users = r.json() if r.ok else []
@@ -153,7 +154,28 @@ def add_to_contacts(token: str, email: str) -> None:
     except RequestException as e:
         print(f"⚠️ Error adding to contacts: {e}")
 
-def add_user_to_project(token: str, project_id: int, username: str, email: str, roles: Dict[str, int]) -> None:
+def accept_invitation(token: str, invitation_token: str) -> bool:
+    """Accept pending invitation using invitation token"""
+    s = _session(token)
+    try:
+        # Get invitation details first
+        r = s.get(f"{TAIGA_URL}/api/v1/invitations/{invitation_token}", timeout=30)
+        if r.status_code == 200:
+            # Accept the invitation
+            r_accept = s.post(f"{TAIGA_URL}/api/v1/invitations/{invitation_token}/accept", timeout=30)
+            if r_accept.status_code in [200, 201, 204]:
+                return True
+            else:
+                print(f"⚠️ Failed to accept invitation: {r_accept.status_code}")
+                return False
+        else:
+            print(f"⚠️ Failed to get invitation: {r.status_code}")
+            return False
+    except RequestException as e:
+        print(f"⚠️ Error accepting invitation: {e}")
+        return False
+
+def add_user_to_project(token: str, project_id: int, email: str, roles: Dict[str, int]) -> None:
     role_id = roles.get("Developer") or (list(roles.values())[0] if roles else None)
     if not role_id:
         print(f"⚠️ No roles found for project")
@@ -161,17 +183,27 @@ def add_user_to_project(token: str, project_id: int, username: str, email: str, 
     s = _session(token)
     payload = {
         "project": project_id,
-        "username": username,
         "role": role_id,
+        "username": email,
     }
     try:
-        r = s.post(f"{TAIGA_URL}/api/v1/memberships", json={"project": project_id, "username": username, "email": email, "role": role_id}, timeout=30)
+        r = s.post(f"{TAIGA_URL}/api/v1/memberships", json=payload, timeout=30)
         if r.status_code == 201:
-            print(f"✅ Added user {username} to project")
+            membership_data = r.json()
+            invitation_token = membership_data.get("user", {}).get("invitation_token") if isinstance(membership_data.get("user"), dict) else None
+            
+            print(f"✅ Added user {email} to project")
+            
+            # Auto-accept the invitation if token is available
+            if invitation_token:
+                if accept_invitation(token, invitation_token):
+                    print(f"✅ Auto-accepted invitation for {email}")
         elif r.status_code == 400 and "already exists" in r.text.lower():
-            print(f"↪️ User {username} already in project")
+            print(f"↪️ User {email} already in project")
+        elif r.status_code == 500:
+            print(f"⚠️ Server error adding user {email} to project (user may already be member)")
         else:
-            print(f"⚠️ Failed to add user {username} to project: {r.status_code} {r.text}")
+            print(f"⚠️ Failed to add user {email} to project: {r.status_code} {r.text[:200]}")
     except RequestException as e:
         print(f"⚠️ Error adding user to project: {e}")
 
@@ -183,12 +215,14 @@ def process_users_csv(token: str, project_id: int, roles: Dict[str, int]) -> Non
         with open(USER_CSV_FILE, newline="", encoding="utf-8-sig") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                username = (row.get("username") or "").strip()
+                # CSV columns: "User id", "User name", "email", etc.
+                username = (row.get("User name") or "").strip()
                 email = (row.get("email") or "").strip()
-                full_name = (row.get("full_name") or "").strip()
+                full_name = username  # Use "User name" as full_name
                 if not username or not email:
                     print("⚠️ Skipped user: missing username or email")
                     continue
+                USER_CSV_MAP[username] = email
                 # Check if exists
                 existing_id = find_user_id(token, username)
                 if existing_id:
@@ -196,7 +230,8 @@ def process_users_csv(token: str, project_id: int, roles: Dict[str, int]) -> Non
                 else:
                     create_user(token, username, email, full_name)
                     existing_id = find_user_id(token, username)
-                # User created, but may need email confirmation to be added to project
+                # Add to project using email as username
+                add_user_to_project(token, project_id, email, roles)
     except Exception as e:
         print(f"💥 Error processing users CSV: {e}")
 
@@ -295,6 +330,13 @@ def create_userstory(
 
     status_id = get_or_create_us_status(token, project_id, status_name_from_csv or DEFAULT_US_STATUS_NAME)
     assigned_to = find_user_id(token, assignee_name) if assignee_name else None
+
+    # Create user if not found and assignee specified
+    if not assigned_to and assignee_name:
+        email = USER_CSV_MAP.get(assignee_name, assignee_name)
+        create_user(token, assignee_name, email, assignee_name)
+        assigned_to = find_user_id(token, assignee_name)
+        add_user_to_project(token, project_id, email, roles)
 
     description = description.replace("\r\n", "\n").strip() if description else ""
 
